@@ -1,9 +1,9 @@
+use wasm_bindgen::prelude::*;
+use wasm_bindgen::JsCast;
 use js_sys::Math;
 use std::cell::RefCell;
 use std::rc::Rc;
-use wasm_bindgen::prelude::*;
-use wasm_bindgen::JsCast;
-use web_sys::{Document, Element, Event, HtmlElement, Node, Window};
+use web_sys::{Element, Event, Node};
 
 const ADJECTIVES_LEN: usize = 25;
 const ADJECTIVES_LEN_F64: f64 = ADJECTIVES_LEN as f64;
@@ -63,8 +63,6 @@ struct Row {
 const ROW_TEMPLATE: &str = "<td class='col-md-1'></td><td class='col-md-4'><a class='lbl'></a></td><td class='col-md-1'><a class='remove'><span class='remove glyphicon glyphicon-remove' aria-hidden='true'></span></a></td><td class='col-md-6'></td>";
 
 struct Main {
-    window: Window,
-    document: Document,
     data: Vec<Row>,
     row_template: Node,
     tbody: Node,
@@ -77,7 +75,7 @@ fn get_parent_id(el: Element) -> Option<usize> {
     while let Some(e) = current {
         if e.tag_name() == "TR" {
             return match e.get_attribute("data-id") {
-                Some(id) => Some(id.parse::<usize>().unwrap()),
+                Some(id) => Some(id.parse::<usize>().unwrap_throw()),
                 None => None,
             };
         }
@@ -98,9 +96,9 @@ impl Main {
 
     fn update(&mut self) {
         let mut i = 0;
-        let mut l = self.data.len();
+        let l = self.data.len();
         while i < l {
-            let mut row = &mut self.data[i];
+            let row = &mut self.data[i];
             row.label.push_str(" !!!");
             row.label_node.set_text_content(Some(row.label.as_str()));
             i += 10;
@@ -150,9 +148,9 @@ impl Main {
         let row1 = &self.data[1];
         let row998 = &self.data[998];
         let a = &row1.el;
-        let b = a.next_sibling().unwrap();
+        let b = a.next_sibling().unwrap_throw();
         let c = &row998.el;
-        let d = c.next_sibling().unwrap();
+        let d = c.next_sibling().unwrap_throw();
         self.tbody.insert_before(&c, Some(&b))?;
         self.tbody.insert_before(&a, Some(&d))?;
         self.data.swap(1, 998);
@@ -176,8 +174,8 @@ impl Main {
             label.push_str(noun);
 
             let node = self.row_template.clone_node_with_deep(true)?;
-            let id_node = node.first_child().unwrap();
-            let label_node = id_node.next_sibling().unwrap().first_child().unwrap();
+            let id_node = node.first_child().unwrap_throw();
+            let label_node = id_node.next_sibling().unwrap_throw().first_child().unwrap_throw();
             let id_string = id.to_string();
             let id_str = id_string.as_str();
             id_node.set_text_content(Some(id_str));
@@ -198,22 +196,30 @@ impl Main {
         self.last_id += count;
         Ok(())
     }
+}
 
+fn document() -> web_sys::Document {
+    web_sys::window().unwrap_throw().document().unwrap_throw()
+}
+
+fn on<F>(id: &str, name: &str, callback: F) where F: FnMut(web_sys::Event) + 'static {
+    let target = document().get_element_by_id(id).unwrap_throw();
+
+    let closure = Closure::wrap(Box::new(callback) as Box<dyn FnMut(web_sys::Event)>);
+
+    target.add_event_listener_with_callback(name, closure.as_ref().unchecked_ref()).unwrap_throw();
+
+    closure.forget();
 }
 
 #[wasm_bindgen(start)]
-pub fn run() -> Result<(), JsValue> {
-    let window = web_sys::window().unwrap();
-    let document = window.document().unwrap();
-
-    let row_template = document.create_element("tr")?;
+pub fn main_js() -> Result<(), JsValue> {
+    let row_template = document().create_element("tr")?;
     row_template.set_inner_html(ROW_TEMPLATE);
 
-    let tbody = document.get_element_by_id("tbody").unwrap();
+    let tbody = document().get_element_by_id("tbody").unwrap_throw();
 
-    let mut main = RefCell::new(Rc::new(Main {
-        window,
-        document,
+    let main = Rc::new(RefCell::new(Main {
         data: Vec::new(),
         row_template: row_template.into(),
         tbody: tbody.into(),
@@ -221,27 +227,20 @@ pub fn run() -> Result<(), JsValue> {
         selected: None,
     }));
 
-    let main2 = main.clone();
-    let onclick = Closure::wrap(Box::new(move |e: Event| {
-        let target = match e.target() {
-            Some(target) => target,
-            None => return,
-        };
-        let el = JsCast::unchecked_ref::<Element>(&target);
-        let mut m = main2.borrow_mut();
-        let main = match Rc::get_mut(&mut m) {
-            Some(main) => main,
-            None => return,
-        };
+    on("main", "click", move |e: Event| {
+        let target = e.target().unwrap_throw();
+        let el: &Element = target.unchecked_ref();
+
+        let mut main = main.borrow_mut();
 
         match el.id().as_str() {
             "add" => {
                 e.prevent_default();
-                main.add();
+                main.add().unwrap_throw();
             }
             "run" => {
                 e.prevent_default();
-                main.run();
+                main.run().unwrap_throw();
             }
             "update" => {
                 e.prevent_default();
@@ -249,7 +248,7 @@ pub fn run() -> Result<(), JsValue> {
             }
             "runlots" => {
                 e.prevent_default();
-                main.run_lots();
+                main.run_lots().unwrap_throw();
             }
             "clear" => {
                 e.prevent_default();
@@ -257,34 +256,24 @@ pub fn run() -> Result<(), JsValue> {
             }
             "swaprows" => {
                 e.prevent_default();
-                main.swap_rows();
+                main.swap_rows().unwrap_throw();
             }
             _ => {
                 let class_list = el.class_list();
+
                 if class_list.contains("remove") {
                     e.prevent_default();
-                    let parent_id = match get_parent_id(el.clone()) {
-                        Some(id) => id,
-                        None => return,
-                    };
+                    let parent_id = get_parent_id(el.clone()).unwrap_throw();
                     main.delete(parent_id);
+
                 } else if class_list.contains("lbl") {
                     e.prevent_default();
-                    let parent_id = match get_parent_id(el.clone()) {
-                        Some(id) => id,
-                        None => return,
-                    };
+                    let parent_id = get_parent_id(el.clone()).unwrap_throw();
                     main.select(parent_id);
                 }
             }
         }
-    }) as Box<dyn FnMut(_)>);
-
-    if let Ok(m) = &(main.try_borrow()) {
-        let main_el = m.document.get_element_by_id("main").unwrap();
-        main_el.add_event_listener_with_callback("click", onclick.as_ref().unchecked_ref())?;
-        onclick.forget();
-    }
+    });
 
     Ok(())
 }
